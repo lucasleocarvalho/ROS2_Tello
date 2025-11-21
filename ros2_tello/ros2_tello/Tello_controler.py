@@ -4,9 +4,10 @@ from djitellopy import Tello
 import math
 
 class TelloController:
-    def __init__(self):
-        self.tello = Tello()
-        self.sensors = Tello_sensors.TelloSensors()
+    def __init__(self, tello):
+        #self.tello = Tello()
+        self.tello = tello
+        self.sensors = Tello_sensors.TelloSensors(tello)
 
     def yaw_speed(self, vx, vy):
         if vx == 0 and vy == 0:
@@ -24,47 +25,37 @@ class TelloController:
 
         
     
-    def pos_ctrl(self, x: int, y: int, z: int, vx: int, vy: int, vz: int, threshold):
-
-        """
-        Controla o Tello usando controle de posição aproximado baseado em velocidades.
-
-        Parâmetros:
-            x (int): Posição desejada no eixo X em metros aproximados.
-            y (int): Posição desejada no eixo Y em metros aproximados.
-            z (int): Altura desejada no eixo Z em metros aproximados.
-            vx (int): Velocidade inicial no eixo X (m/s).
-            vy (int): Velocidade inicial no eixo Y (m/s).
-            vz (int): Velocidade inicial no eixo Z (m/s).
-            threshold (float): Raio de tolerância em metros ao redor do destino.
-
-        Funcionamento:
-            Usa as velocidades e a posição estimada pelos sensores para mover o drone
-            em direção ao ponto desejado. As velocidades são zeradas automaticamente
-            quando o drone entra na região de tolerância.
-
-        Retorno:
-            None
-        """
+    def pos_ctrl(self, x: int, y: int, z: int, yaw: int, vx: int, vy: int, vz: int, yaw_speed: int, threshold):
         
         while True:
             pose_x, pose_y, pose_z = self.sensors.distance()
-            yaw_speed = self.yaw_speed(vx, vy)
+            roll, pitch, yaw_mea = self.sensors.orientation()
+            #yaw_speed = self.yaw_speed(vx, vy)
             
-            if x - threshold <= pose_x <= x + threshold:
+            if x - threshold <= abs(pose_x) <= x + threshold:
                 vx = 0
-            if y - threshold <= pose_y <= y + threshold:
+            if y - threshold <= abs(pose_y) <= y + threshold:
                 vy = 0
-            if z - threshold <= pose_z <= z + threshold:
+            if z - threshold <= abs(pose_z) <= z + threshold:
                 vz = 0
             
-            if vx == 0 and vy == 0:
+            if yaw - threshold <= abs(yaw_mea) <= yaw + threshold:
                 yaw_speed = 0
+            
+            
+            #if vx == 0 and vy == 0:
+                #yaw_speed = 0
+            
 
+            self.tello.send_rc_control(int(vy), int(vx), int(vz), yaw_speed)
+            px, py, pz = self.sensors.distance()
 
-            self.tello.send_rc_control(int(vx), int(vy), int(vz), int(yaw_speed))
+            vvx, vvy, vvz = self.sensors.velocity()
+            ax, ay, az = self.sensors.acceleration()
 
-            if vx == 0 and vy == 0 and vz == 0:
+            print(f"X: {px} \nY: {py} \nZ: {pz} \nYaw: {yaw_mea} \nVX: {vvx} \nVY: {vvy} \nAX: {ax} \nAY: {ay}")
+
+            if vx == 0 and vy == 0 and vz == 0 and yaw_speed == 0:
                 break
 
             time.sleep(0.05)
