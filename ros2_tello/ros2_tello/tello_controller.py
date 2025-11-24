@@ -1,4 +1,7 @@
 import time
+import json
+import os
+from ament_index_python.packages import get_package_share_directory
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
@@ -6,11 +9,19 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import BatteryState
 from geometry_msgs.msg import Twist
 from std_srvs.srv import Empty
-import math
 
 class TelloController(Node):
     def __init__(self):
         super().__init__('tello_controller')
+
+        share_dir = get_package_share_directory('ros2_tello')
+        wp_path = os.path.join(share_dir, 'config', 'waypoints.json')
+        with open(wp_path, 'r') as f:
+            self.waypoints = json.load(f)
+        
+        self.index = 0
+        self.tolerance = 10
+
         qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
         timer = 0.05
         self.flying = False
@@ -63,6 +74,7 @@ class TelloController(Node):
     def request_land(self):
         future = self.land_cli.call_async(self.request)
         rclpy.spin_until_future_complete(self, future)
+        self.flying = False
         return future.result()
 
     def cmd_vel_callback(self, vx, vy, vz, vw):
@@ -79,22 +91,43 @@ class TelloController(Node):
         self.cmd_vel.publish(msg)
 
     def timer_callback(self):
-        vy = 0
-        vz = 0
-        if self.x - 10 <= 100 <= self.x + 10:
-            self.vvx = 0
+        wp = self.waypoints[self.index]
+
+        if self.index == 0 and self.flying == False:
+            self.request_takeoff()
+            self.get_logger().info("Iniciando voo...")
+            return
+
+        target_x = wp["x"]
+        target_y = wp["y"]
+        target_z = wp["z"]
+        #target_yaw = wp["yaw"]
+
+        vx = wp["vx"]
+        vy = wp["vy"]
+        vz = wp["vz"]
+        #vw = wp["vw"]
+
+        if self.x - self.tolerance <= target_x <= self.x + self.tolerance:
+            vx = 0
         
-        if self.y - 10 <= 100 <= self.y + 10:
+        if self.y - self.tolerance <= target_y <= self.y + self.tolerance:
             vy = 0
         
-        if self.z - 10 <= 100 <= self.z + 10:
+        if self.z - self.tolerance <= target_z <= self.z + self.tolerance:
             vz = 0
         
-        if self.vvx == 0 and vy == 0 and vz == 0:
+        if vx == 0 and vy == 0 and vz == 0:
+            self.index += 1
+            return
+
+        self.cmd_vel_callback(vx, vy, vz, 0.0)
+
+        if self.index >= len(self.waypoints):
+            self.get_logger().info("Todos os waypoints concluídos! Pousando...")
             self.request_land()
-        
-        
-        self.cmd_vel_callback(self.vvx, 0.0, 0.0, 0.0)
+            return
+
 
 
 def main(args=None):
