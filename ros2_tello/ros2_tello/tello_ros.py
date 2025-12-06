@@ -200,6 +200,7 @@ class ROS2TelloSensors(Node):
 
         self.odom_publish = self.create_publisher(Odometry, '/tello/odom', qos)
         self.battery_publish = self.create_publisher(BatteryState, '/tello/battery', qos)
+        
         self.cmd_vel = self.create_subscription(Twist, '/tello/cmd_vel', self.twist, qos)
 
         self.takeoff_srv = self.create_service(Empty, '/tello/takeoff', self.takeoff)
