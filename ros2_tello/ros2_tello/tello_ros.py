@@ -235,6 +235,7 @@ class ROS2TelloSensors(Node):
         odom.twist.twist.angular.z = 0.0
 
         self.odom_publish.publish(odom)
+    
 
     def battery_callback(self):
         battery = BatteryState()

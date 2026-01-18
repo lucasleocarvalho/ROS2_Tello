@@ -5,9 +5,9 @@ from ament_index_python.packages import get_package_share_directory
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, Path
 from sensor_msgs.msg import BatteryState
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, PoseStamped
 from std_srvs.srv import Empty
 
 class TelloController(Node):
@@ -35,6 +35,7 @@ class TelloController(Node):
         self.vz = 0.0
 
         self.cmd_vel = self.create_publisher(Twist, '/tello/cmd_vel', qos)
+        self.path_publisher = self.create_publisher(Path, '/tello/path', qos)
 
         self.odom = self.create_subscription(Odometry, '/tello/odom', self.odometry_callback, qos)
         self.battery = self.create_subscription(BatteryState, '/tello/battery', self.battery_callback, qos)
@@ -42,6 +43,9 @@ class TelloController(Node):
         self.takeoff_cli = self.create_client(Empty, '/tello/takeoff')
         self.land_cli = self.create_client(Empty, '/tello/land')
         self.request = Empty.Request()
+
+        self.path = Path()
+        self.path.header.frame_id = 'map' 
 
         while not self.takeoff_cli.wait_for_service(1.0):
             self.get_logger().info("Aguardando serviço /tello/takeoff...")
@@ -60,6 +64,16 @@ class TelloController(Node):
         self.vx = msg.twist.twist.linear.x
         self.vy = msg.twist.twist.linear.y
         self.vz = msg.twist.twist.linear.z
+
+        pose = PoseStamped()
+
+        pose.header = msg.header
+        pose.pose = msg.pose.pose
+
+        self.path.header = msg.header
+        self.path.poses.append(pose)
+
+        self.path_publisher.publish(self.path)
         
 
     def battery_callback(self, msg):
