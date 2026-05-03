@@ -11,21 +11,23 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import BatteryState
 from geometry_msgs.msg import Twist
 from std_srvs.srv import Empty
+import csv, os, json
+from ament_index_python.packages import get_package_share_directory
 
 class KalmanFilter():
     def __init__(self, dt):
         self.dt = dt
         self.x = np.zeros((6, 1))
         self.P = np.eye(6) * 100
-        self.R = np.diag([10.0, 10.0, 100.0, 100.0])  # vx, vy, ax, ay
-        self.Q = np.diag([1e-4, 1e-4, 1e-3, 1e-3, 1e-2, 1e-2])
+        self.R = np.diag([1, 10.0, 10.0, 10.0])  # z, vx, vy, vz, ax, ay, vz
+        self.Q = np.diag([0.1, 0.1, 0.1, 150, 150, 150])
 
 
         self.F = np.array([
-            [1, 0, self.dt, 0, 0.5*self.dt**2, 0],
-            [0, 1, 0, self.dt, 0, 0.5*self.dt**2],
-            [0, 0, 1, 0, self.dt, 0],
-            [0, 0, 0, 1, 0, self.dt],
+            [1, 0, 0, self.dt, 0, 0],
+            [0, 1, 0, 0, self.dt, 0],
+            [0, 0, 1, 0, 0, self.dt],
+            [0, 0, 0, 1, 0, 0],
             [0, 0, 0, 0, 1, 0],
             [0, 0, 0, 0, 0, 1]
         ])
@@ -48,8 +50,8 @@ class KalmanFilter():
     
 
 class TelloROS():
-    def __init__(self, tello):
-        self.tello = tello
+    def __init__(self):
+        self.tello = Tello()
         self.kalman = KalmanFilter(0.05)
 
         self.pose_x = 0.0
@@ -68,34 +70,51 @@ class TelloROS():
 
         self.last_yaw = 0.0
 
+        self.last_height = 0.0
+
+
+    def connect(self):
+        self.tello.connect()
         self.running = True
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
-
+        return
 
     def _loop(self):
         while self.running:
-            vx, vy, self.vz = self.velocity()
-            ax, ay, self.az = self.acceleration()
+            vx, vy, vz = self.velocity()
+            #ax, ay, az = self.acceleration()
 
             self.battery = self.tello.get_battery()
-            self.pose_z = self.tello.get_height()
+            
+            alpha = 0.3
 
+            height_raw = self.tello.get_height()
+
+            if height_raw == 0:
+                height = self.last_height
+            else:
+                height = alpha * height_raw + (1 - alpha) * self.last_height
+                self.last_height = height
 
             z = np.array([
+                  [self.last_height / 100],
                   [vx],
                   [vy],
-                  [ax],
-                  [ay]
+                  [vz]
             ])
             state = self.kalman.algorithm(z)
 
             self.pose_x = state[0, 0]
             self.pose_y = state[1, 0]
-            self.vx = state[2, 0]
-            self.vy = state[3, 0]
-            self.ax = state[4, 0]
-            self.ay = state[5, 0]
+            self.pose_z = state[2, 0]
+            #self.pose_z = self.last_height / 100
+            self.vx = state[3, 0]
+            self.vy = state[4, 0]
+            self.vz = state[5, 0]
+
+            if self.pose_z < 0.0:
+                self.pose_z = 0.0
 
             time.sleep(0.05)
 
@@ -122,16 +141,16 @@ class TelloROS():
         return x, y
 
     def velocity(self):
-        vx = self.tello.get_speed_x() * 10  # frente
-        vy = self.tello.get_speed_y() * 10  # direita
-        vz = self.tello.get_speed_z() * 10
+        vx = self.tello.get_speed_x() / 10  # frente
+        vy = self.tello.get_speed_y() / 10  # direita
+        vz = self.tello.get_speed_z() / 10
 
         return vx, vy, vz
 
     def acceleration(self):
-        ax = self.tello.get_acceleration_x()
-        ay = self.tello.get_acceleration_y()
-        az = self.tello.get_acceleration_z()
+        ax = self.tello.get_acceleration_x() / 100
+        ay = self.tello.get_acceleration_y() / 100
+        az = self.tello.get_acceleration_z() / 100
 
         ax, ay = self.rotation(ax, ay)
 
@@ -180,28 +199,49 @@ class TelloROS():
 class ROS2TelloSensors(Node):
     def __init__(self):
         super().__init__('ros2_tello_sensors')
-        self.tello = Tello()
         logging.getLogger('djitellopy').setLevel(logging.CRITICAL)
+
+        share_dir = get_package_share_directory('ros2_tello')
+        wp_path = os.path.join(share_dir, 'config', 'waypoints.json')
+        with open(wp_path, 'r') as f:
+            self.waypoints = json.load(f)
+
+        self.csv_file = open('ground_truth.csv', mode='w', newline='')
+        self.csv_writer = csv.writer(self.csv_file)
+        self.csv_writer.writerow([
+            'timestamp',
+            'x',
+            'y',
+            'z',
+            'vx',
+            'vy',
+            'vz'
+        ])
+        
+        self.index = 0      
+
+        self.tello_ros = TelloROS()
+        self.time = 0.05
+        self.flying = False
+        self.goal = False
 
         while True:
             try:
                 self.get_logger().info("Tentando conectar ao Tello...")
-                self.tello.connect()
+                self.tello_ros.connect()
                 self.get_logger().info("Conexão com Tello bem-sucedida!")
                 break
             except Exception as e:
                 self.get_logger().warn(f"Falha ao conectar ao Tello: {e}. Tentando novamente...")
                 time.sleep(1)
         
-        self.tello_ros = TelloROS(self.tello)
-        self.time = 0.05
-
-        qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
+        qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE, history=HistoryPolicy.KEEP_LAST, depth=10)
+        qos2 = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
 
         self.odom_publish = self.create_publisher(Odometry, '/tello/odom', qos)
-        self.battery_publish = self.create_publisher(BatteryState, '/tello/battery', qos)
+        self.battery_publish = self.create_publisher(BatteryState, '/tello/battery', qos2)
         
-        self.cmd_vel = self.create_subscription(Twist, '/tello/cmd_vel', self.twist, qos)
+        self.cmd_vel = self.create_subscription(Twist, '/tello/cmd_vel', self.twist, qos2)
 
         self.takeoff_srv = self.create_service(Empty, '/tello/takeoff', self.takeoff)
         self.land_srv = self.create_service(Empty, '/tello/land', self.land)
@@ -228,7 +268,7 @@ class ROS2TelloSensors(Node):
         vx, vy, vz = self.tello_ros.velocity_callback()
         odom.twist.twist.linear.x = vx
         odom.twist.twist.linear.y = vy
-        odom.twist.twist.linear.z = float(vz)
+        odom.twist.twist.linear.z = vz
         
         odom.twist.twist.angular.x = 0.0
         odom.twist.twist.angular.y = 0.0
@@ -265,6 +305,79 @@ class ROS2TelloSensors(Node):
     def timer_callback(self):
         self.odom_callback()
         self.battery_callback()
+        self.move_manually()
+    
+    def move_manually(self):
+        x, y, z = self.tello_ros.pose_callback()
+        vvx, vvy, vvz = self.tello_ros.velocity_callback()
+
+        print(f"X: {x:.2f}   Y: {y:.2f}  Z: {z:.2f} ")
+        print(f"VX: {vvx:.2f}  VY: {vvy:.2f}  Vz: {vvz:.2f}")
+
+        timestamp = self.get_clock().now().nanoseconds / 1e-9
+        self.csv_writer.writerow([
+            timestamp,
+            x,
+            y,
+            z,
+            vvx,
+            vvy,
+            vvz
+        ])    
+
+        if self.goal is not True:
+            battery = self.tello_ros.battery_callback()
+            if battery <= 15:
+                self.get_logger().warning(f"Bateria em {battery:.0f}%. O drone não irá decolar...")
+                time.sleep(0.5)
+                return
+            
+            try:
+                if self.index >= len(self.waypoints):
+                    self.get_logger().info("Todos os waypoints concluídos! Iniciando Pouso...")
+                    self.flying = False
+                    self.goal = True
+                    self.tello_ros.land()
+                    return
+
+                wp = self.waypoints[self.index]
+
+                if self.flying == False and self.index == 0:
+                    #self.get_logger().info(f"Bateria atual: {battery:.0f}%. Decolando...")
+                    self.tello_ros.takeoff()
+                    self.flying = True
+
+                vx = wp["vx"]
+                vy = wp["vy"]
+                vz = wp["vz"]
+                vw = 0
+
+                x_goal = wp["x"] 
+                y_goal = wp["y"] 
+                z_goal = wp["z"] 
+                yaw_goal = 0.0
+
+                treshold = 0.2
+
+                if abs(x - x_goal) <= treshold:
+                    vx = 0
+                if abs(y - y_goal) <= treshold:
+                    vy = 0
+                if abs(z - z_goal) <= treshold:
+                    vz = 0
+
+                if vx != 0 or vy != 0 or vz != 0:
+                    self.tello_ros.move(vx, vy, vz, vw)
+
+                if vx == 0 and vy == 0 and vz == 0 and self.flying is True:
+                    self.index += 1
+                    
+
+            except:
+                if self.flying is True:
+                    self.get_logger().warning("Pouso emergencial acionado...")
+                    self.tello_ros.land()
+
 
 
 def main(args=None):
