@@ -20,11 +20,11 @@ colcon build
 source install/setup.bash
 '''
 
-"" Uso
+## Uso
 Para conectar o drone: 
-''' bash
-ros2 run ros2_tello tello_ros 
-'''
+'''bash
+ros2 run ros2_tello tello_ros''' 
+
 Para iniciar o controle do drone:
 ''' bash
 ros2 run ros2_tello tello_controller 
