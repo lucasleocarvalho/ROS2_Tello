@@ -1,0 +1,4 @@
+[console_scripts]
+tello_controller = ros2_tello.tello_controller:main
+tello_ros = ros2_tello.tello_ros:main
+
