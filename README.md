@@ -20,6 +20,8 @@ source install/setup.bash
 ```
 
 ## Uso
+Conecte o computador ao wifi gerado pelo Tello.
+
 Para conectar o drone: 
 ```bash
 ros2 run ros2_tello tello_ros
