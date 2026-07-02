@@ -13,7 +13,7 @@ Para instalar ROS2_Tello:
 ```bash
 mkdir tello_ws && cd tello_ws
 mkdir src && cd src
-git clone https://github.com/lucasleocarvalho/ROS2_Tello/tree/Erick/ROS2_Tello.git
+git clone https://github.com/lucasleocarvalho/ROS2_Tello.git
 cd ..
 colcon build
 source install/setup.bash
