@@ -294,6 +294,11 @@ class ROS2TelloSensors(Node):
         self.get_logger().info("Pousando...")
         return response
 
+    def manual_land(self):
+        self.tello_ros.land()
+        self.get_logger().info("Pousando...")
+
+
     def twist(self, msg):
         vx = msg.linear.x
         vy = msg.linear.y
@@ -308,76 +313,69 @@ class ROS2TelloSensors(Node):
         self.move_manually()
     
     def move_manually(self):
-        x, y, z = self.tello_ros.pose_callback()
-        vvx, vvy, vvz = self.tello_ros.velocity_callback()
+        try:
+            x, y, z = self.tello_ros.pose_callback()
+            vvx, vvy, vvz = self.tello_ros.velocity_callback()
 
-        print(f"X: {x:.2f}   Y: {y:.2f}  Z: {z:.2f} ")
-        print(f"VX: {vvx:.2f}  VY: {vvy:.2f}  Vz: {vvz:.2f}")
+            print(f"X: {x:.2f}   Y: {y:.2f}  Z: {z:.2f} ")
+            print(f"VX: {vvx:.2f}  VY: {vvy:.2f}  Vz: {vvz:.2f}") 
 
-        timestamp = self.get_clock().now().nanoseconds / 1e-9
-        self.csv_writer.writerow([
-            timestamp,
-            x,
-            y,
-            z,
-            vvx,
-            vvy,
-            vvz
-        ])    
-
-        if self.goal is not True:
-            battery = self.tello_ros.battery_callback()
-            if battery <= 15:
-                self.get_logger().warning(f"Bateria em {battery:.0f}%. O drone não irá decolar...")
-                time.sleep(0.5)
-                return
-            
-            try:
-                if self.index >= len(self.waypoints):
-                    self.get_logger().info("Todos os waypoints concluídos! Iniciando Pouso...")
-                    self.flying = False
-                    self.goal = True
-                    self.tello_ros.land()
+            if self.goal is not True:
+                battery = self.tello_ros.battery_callback()
+                if battery <= 15:
+                    self.get_logger().warning(f"Bateria em {battery:.0f}%. O drone não irá decolar...")
+                    time.sleep(0.5)
                     return
+                
+                try:
+                    if self.index >= len(self.waypoints):
+                        self.get_logger().info("Todos os waypoints concluídos! Iniciando Pouso...")
+                        self.flying = False
+                        self.goal = True
+                        self.tello_ros.land()
+                        return
 
-                wp = self.waypoints[self.index]
+                    wp = self.waypoints[self.index]
 
-                if self.flying == False and self.index == 0:
-                    #self.get_logger().info(f"Bateria atual: {battery:.0f}%. Decolando...")
-                    self.tello_ros.takeoff()
-                    self.flying = True
+                    if self.flying == False and self.index == 0:
+                        #self.get_logger().info(f"Bateria atual: {battery:.0f}%. Decolando...")
+                        self.tello_ros.takeoff()
+                        self.flying = True
 
-                vx = wp["vx"]
-                vy = wp["vy"]
-                vz = wp["vz"]
-                vw = 0
+                    vx = wp["vx"]
+                    vy = wp["vy"]
+                    vz = wp["vz"]
+                    vw = 0
 
-                x_goal = wp["x"] 
-                y_goal = wp["y"] 
-                z_goal = wp["z"] 
-                yaw_goal = 0.0
+                    x_goal = wp["x"] 
+                    y_goal = wp["y"] 
+                    z_goal = wp["z"] 
+                    yaw_goal = 0.0
 
-                treshold = 0.2
+                    treshold = 0.2
 
-                if abs(x - x_goal) <= treshold:
-                    vx = 0
-                if abs(y - y_goal) <= treshold:
-                    vy = 0
-                if abs(z - z_goal) <= treshold:
-                    vz = 0
+                    if abs(abs(x) - abs(x_goal)) <= treshold:
+                        vx = 0
+                    if abs(abs(y) - abs(y_goal)) <= treshold:
+                        vy = 0
+                    if abs(abs(z) - abs(z_goal)) <= treshold:
+                        vz = 0
 
-                if vx != 0 or vy != 0 or vz != 0:
-                    self.tello_ros.move(vx, vy, vz, vw)
+                    if vx != 0 or vy != 0 or vz != 0:
+                        self.tello_ros.move(vx, vy, vz, vw)
 
-                if vx == 0 and vy == 0 and vz == 0 and self.flying is True:
-                    self.index += 1
-                    
+                    if vx == 0 and vy == 0 and vz == 0 and self.flying is True:
+                        self.index += 1
+                        
 
-            except:
-                if self.flying is True:
-                    self.get_logger().warning("Pouso emergencial acionado...")
-                    self.tello_ros.land()
-
+                except:
+                    if self.flying is True:
+                        self.get_logger().warning("Pouso emergencial acionado...")
+                        self.tello_ros.land()
+        
+        except:
+            self.get_logger().warning("Pouso emergencial acionado...")
+            self.tello_ros.land()  
 
 
 def main(args=None):
@@ -388,6 +386,7 @@ def main(args=None):
         rclpy.spin(ros2_tello_sensors)
         
     except KeyboardInterrupt:
+        ros2_tello_sensors.manual_land()
         ros2_tello_sensors.destroy_node()
         rclpy.shutdown()
 
